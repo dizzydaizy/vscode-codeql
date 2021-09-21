@@ -15,6 +15,10 @@
   display: flex;
   padding: 0.5em 0;
   align-items: center;
+  top: 0;
+  background-color: var(--vscode-editorGutter-background);
+  position: sticky;
+  z-index: 1;
 }
 
 .vscode-codeql__table-selection-header-item {
@@ -220,4 +224,17 @@ td.vscode-codeql__path-index-cell {
 
 .vscode-codeql__compare-body > tbody {
   vertical-align: top;
+}
+
+.vscode-codeql__empty-query-message {
+  height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vscode-codeql__empty-query-message > span {
+  max-width: 80%;
+  font-size: 14px;
+  text-align: center;
 }

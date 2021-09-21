@@ -9,9 +9,12 @@ import { Logger, ProgressReporter } from './logging';
 import { completeQuery, EvaluationResult, progress, ProgressMessage, WithProgressId } from './pure/messages';
 import * as messages from './pure/messages';
 import { ProgressCallback, ProgressTask } from './commandRunner';
+import * as fs from 'fs-extra';
+import * as helpers from './helpers';
 
 type ServerOpts = {
   logger: Logger;
+  contextStoragePath: string;
 }
 
 /** A running query server process and its associated message connection. */
@@ -27,7 +30,7 @@ class ServerProcess implements Disposable {
   }
 
   dispose(): void {
-    this.logger.log('Stopping query server...');
+    void this.logger.log('Stopping query server...');
     this.connection.dispose();
     this.child.stdin!.end();
     this.child.stderr!.destroy();
@@ -35,7 +38,7 @@ class ServerProcess implements Disposable {
 
     // On Windows, we usually have to terminate the process before closing its stdout.
     this.child.stdout!.destroy();
-    this.logger.log('Stopped query server.');
+    void this.logger.log('Stopped query server.');
   }
 }
 
@@ -86,6 +89,26 @@ export class QueryServerClient extends DisposableObject {
     this.evaluationResultCallbacks = {};
   }
 
+  async initLogger() {
+    let storagePath = this.opts.contextStoragePath;
+    let isCustomLogDirectory = false;
+    if (this.config.customLogDirectory) {
+      try {
+        if (!(await fs.pathExists(this.config.customLogDirectory))) {
+          await fs.mkdir(this.config.customLogDirectory);
+        }
+        void this.logger.log(`Saving query server logs to user-specified directory: ${this.config.customLogDirectory}.`);
+        storagePath = this.config.customLogDirectory;
+        isCustomLogDirectory = true;
+      } catch (e) {
+        void helpers.showAndLogErrorMessage(`${this.config.customLogDirectory} is not a valid directory. Logs will be stored in a temporary workspace directory instead.`);
+      }
+    }
+
+    await this.logger.setLogStoragePath(storagePath, isCustomLogDirectory);
+
+  }
+
   get logger(): Logger {
     return this.opts.logger;
   }
@@ -95,7 +118,7 @@ export class QueryServerClient extends DisposableObject {
     if (this.serverProcess !== undefined) {
       this.disposeAndStopTracking(this.serverProcess);
     } else {
-      this.logger.log('No server process to be stopped.');
+      void this.logger.log('No server process to be stopped.');
     }
   }
 
@@ -127,6 +150,7 @@ export class QueryServerClient extends DisposableObject {
 
   /** Starts a new query server process, sending progress messages to the given reporter. */
   private async startQueryServerImpl(progressReporter: ProgressReporter): Promise<void> {
+    await this.initLogger();
     const ramArgs = await this.cliServer.resolveRam(this.config.queryMemoryMb, progressReporter);
     const args = ['--threads', this.config.numThreads.toString()].concat(ramArgs);
 
@@ -168,9 +192,8 @@ export class QueryServerClient extends DisposableObject {
     const connection = createMessageConnection(child.stdout, child.stdin);
     connection.onRequest(completeQuery, res => {
       if (!(res.runId in this.evaluationResultCallbacks)) {
-        this.logger.log(`No callback associated with run id ${res.runId}, continuing without executing any callback`);
-      }
-      else {
+        void this.logger.log(`No callback associated with run id ${res.runId}, continuing without executing any callback`);
+      } else {
         const baseLocation = this.logger.getBaseLocation();
         if (baseLocation && this.activeQueryName) {
           res.logFileLocation = path.join(baseLocation, this.activeQueryName);
@@ -185,7 +208,7 @@ export class QueryServerClient extends DisposableObject {
         callback(res);
       }
     });
-    this.serverProcess = new ServerProcess(child, connection, this.opts.logger);
+    this.serverProcess = new ServerProcess(child, connection, this.logger);
     // Ensure the server process is disposed together with this client.
     this.track(this.serverProcess);
     connection.listen();

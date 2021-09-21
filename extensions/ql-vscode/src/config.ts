@@ -79,6 +79,7 @@ const CACHE_SIZE_SETTING = new Setting('cacheSize', RUNNING_QUERIES_SETTING);
 const TIMEOUT_SETTING = new Setting('timeout', RUNNING_QUERIES_SETTING);
 const MEMORY_SETTING = new Setting('memory', RUNNING_QUERIES_SETTING);
 const DEBUG_SETTING = new Setting('debug', RUNNING_QUERIES_SETTING);
+const MAX_PATHS = new Setting('maxPaths', RUNNING_QUERIES_SETTING);
 const RUNNING_TESTS_SETTING = new Setting('runningTests', ROOT_SETTING);
 const RESULTS_DISPLAY_SETTING = new Setting('resultsDisplay', ROOT_SETTING);
 
@@ -87,9 +88,10 @@ export const NUMBER_OF_TEST_THREADS_SETTING = new Setting('numberOfThreads', RUN
 export const MAX_QUERIES = new Setting('maxQueries', RUNNING_QUERIES_SETTING);
 export const AUTOSAVE_SETTING = new Setting('autoSave', RUNNING_QUERIES_SETTING);
 export const PAGE_SIZE = new Setting('pageSize', RESULTS_DISPLAY_SETTING);
+const CUSTOM_LOG_DIRECTORY_SETTING = new Setting('customLogDirectory', RUNNING_QUERIES_SETTING);
 
 /** When these settings change, the running query server should be restarted. */
-const QUERY_SERVER_RESTARTING_SETTINGS = [NUMBER_OF_THREADS_SETTING, SAVE_CACHE_SETTING, CACHE_SIZE_SETTING, MEMORY_SETTING, DEBUG_SETTING];
+const QUERY_SERVER_RESTARTING_SETTINGS = [NUMBER_OF_THREADS_SETTING, SAVE_CACHE_SETTING, CACHE_SIZE_SETTING, MEMORY_SETTING, DEBUG_SETTING, CUSTOM_LOG_DIRECTORY_SETTING];
 
 export interface QueryServerConfig {
   codeQlPath: string;
@@ -99,6 +101,7 @@ export interface QueryServerConfig {
   cacheSize: number;
   queryMemoryMb?: number;
   timeoutSecs: number;
+  customLogDirectory?: string;
   onDidChangeConfiguration?: Event<void>;
 }
 
@@ -110,12 +113,13 @@ export interface QueryHistoryConfig {
   onDidChangeConfiguration: Event<void>;
 }
 
-const CLI_SETTINGS = [ADDITIONAL_TEST_ARGUMENTS_SETTING, NUMBER_OF_TEST_THREADS_SETTING, NUMBER_OF_THREADS_SETTING];
+const CLI_SETTINGS = [ADDITIONAL_TEST_ARGUMENTS_SETTING, NUMBER_OF_TEST_THREADS_SETTING, NUMBER_OF_THREADS_SETTING, MAX_PATHS];
 
 export interface CliConfig {
   additionalTestArguments: string[];
   numberTestThreads: number;
   numberThreads: number;
+  maxPaths: number;
   onDidChangeConfiguration?: Event<void>;
 }
 
@@ -145,7 +149,7 @@ export abstract class ConfigListener extends DisposableObject {
 
   protected abstract handleDidChangeConfiguration(e: ConfigurationChangeEvent): void;
   private updateConfiguration(): void {
-    this._onDidChangeConfiguration.fire();
+    this._onDidChangeConfiguration.fire(undefined);
   }
 
   public get onDidChangeConfiguration(): Event<void> {
@@ -187,7 +191,7 @@ export class QueryServerConfigListener extends ConfigListener implements QuerySe
       config.push(distributionManager.onDidChangeDistribution(async () => {
         const codeQlPath = await distributionManager.getCodeQlPathWithoutVersionCheck();
         config._codeQlPath = codeQlPath!;
-        config._onDidChangeConfiguration.fire();
+        config._onDidChangeConfiguration.fire(undefined);
       }));
     }
     return config;
@@ -195,6 +199,10 @@ export class QueryServerConfigListener extends ConfigListener implements QuerySe
 
   public get codeQlPath(): string {
     return this._codeQlPath;
+  }
+
+  public get customLogDirectory(): string | undefined {
+    return CUSTOM_LOG_DIRECTORY_SETTING.getValue<string>() || undefined;
   }
 
   public get numThreads(): number {
@@ -220,7 +228,7 @@ export class QueryServerConfigListener extends ConfigListener implements QuerySe
       return undefined;
     }
     if (memory == 0 || typeof (memory) !== 'number') {
-      logger.log(`Ignoring value '${memory}' for setting ${MEMORY_SETTING.qualifiedName}`);
+      void logger.log(`Ignoring value '${memory}' for setting ${MEMORY_SETTING.qualifiedName}`);
       return undefined;
     }
     return memory;
@@ -258,6 +266,10 @@ export class CliConfigListener extends ConfigListener implements CliConfig {
     return NUMBER_OF_THREADS_SETTING.getValue<number>();
   }
 
+  public get maxPaths(): number {
+    return MAX_PATHS.getValue<number>();
+  }
+
   protected handleDidChangeConfiguration(e: ConfigurationChangeEvent): void {
     this.handleDidChangeConfigurationForRelevantSettings(CLI_SETTINGS, e);
   }
@@ -285,3 +297,16 @@ export function isCanary() {
  * Avoids caching in the AST viewer if the user is also a canary user.
  */
 export const NO_CACHE_AST_VIEWER = new Setting('disableCache', AST_VIEWER_SETTING);
+
+/**
+ * Lists of GitHub repositories that you want to query remotely via the "Run Remote query" command.
+ * Note: This command is only available for internal users.
+ * 
+ * This setting should be a JSON object where each key is a user-specified name (string),
+ * and the value is an array of GitHub repositories (of the form `<owner>/<repo>`).
+ */
+const REMOTE_REPO_LISTS = new Setting('remoteRepositoryLists', ROOT_SETTING);
+
+export function getRemoteRepositoryLists(): Record<string, string[]> | undefined {
+  return REMOTE_REPO_LISTS.getValue<Record<string, string[]>>() || undefined;
+}
