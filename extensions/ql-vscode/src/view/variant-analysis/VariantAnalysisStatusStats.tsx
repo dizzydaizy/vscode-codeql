@@ -1,12 +1,13 @@
-import * as React from 'react';
-import styled from 'styled-components';
-import { VSCodeLink } from '@vscode/webview-ui-toolkit/react';
-import { formatDate } from '../../pure/date';
+import { styled } from "styled-components";
+import { VSCodeLink } from "@vscode/webview-ui-toolkit/react";
+import { formatDate } from "../../common/date";
+import { VariantAnalysisStatus } from "../../variant-analysis/shared/variant-analysis";
 
-type Props = {
-  completedAt?: Date | undefined;
+export type VariantAnalysisStatusStatsProps = {
+  variantAnalysisStatus: VariantAnalysisStatus;
+  completedAt?: Date;
 
-  onViewLogsClick: () => void;
+  onViewLogsClick?: () => void;
 };
 
 const Container = styled.div`
@@ -21,17 +22,23 @@ const Icon = styled.span`
 `;
 
 export const VariantAnalysisStatusStats = ({
+  variantAnalysisStatus,
   completedAt,
   onViewLogsClick,
-}: Props) => {
-  if (completedAt === undefined) {
-    return <Icon className="codicon codicon-loading codicon-modifier-spin" />;
-  }
-
+}: VariantAnalysisStatusStatsProps) => {
   return (
     <Container>
-      <span>{formatDate(completedAt)}</span>
-      <VSCodeLink onClick={onViewLogsClick}>View logs</VSCodeLink>
+      {variantAnalysisStatus === VariantAnalysisStatus.InProgress ||
+      variantAnalysisStatus === VariantAnalysisStatus.Canceling ? (
+        <div>
+          <Icon className="codicon codicon-loading codicon-modifier-spin" />
+        </div>
+      ) : (
+        <span>{completedAt !== undefined ? formatDate(completedAt) : "-"}</span>
+      )}
+      {onViewLogsClick && (
+        <VSCodeLink onClick={onViewLogsClick}>View actions logs</VSCodeLink>
+      )}
     </Container>
   );
 };

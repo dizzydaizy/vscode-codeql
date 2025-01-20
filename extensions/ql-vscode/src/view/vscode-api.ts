@@ -1,15 +1,26 @@
-import {
+import type {
   FromCompareViewMessage,
-  FromRemoteQueriesMessage,
+  FromMethodModelingMessage,
+  FromModelAlertsMessage,
+  FromModelEditorMessage,
   FromResultsViewMsg,
-  FromVariantAnalysisMessage, VariantAnalysisState
-} from '../pure/interface-types';
+  FromVariantAnalysisMessage,
+  VariantAnalysisState,
+} from "../common/interface-types";
 
 export interface VsCodeApi {
   /**
    * Post message back to vscode extension.
    */
-  postMessage(msg: FromResultsViewMsg | FromCompareViewMessage | FromRemoteQueriesMessage | FromVariantAnalysisMessage): void;
+  postMessage(
+    msg:
+      | FromResultsViewMsg
+      | FromCompareViewMessage
+      | FromVariantAnalysisMessage
+      | FromModelEditorMessage
+      | FromMethodModelingMessage
+      | FromModelAlertsMessage,
+  ): void;
 
   /**
    * Set state of the webview.

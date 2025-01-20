@@ -1,37 +1,88 @@
-import * as React from 'react';
-import { VariantAnalysisStatus } from '../../remote-queries/shared/variant-analysis';
-import { formatDecimal } from '../../pure/number';
-import { ErrorIcon, HorizontalSpace, SuccessIcon, WarningIcon } from '../common';
+import { VariantAnalysisStatus } from "../../variant-analysis/shared/variant-analysis";
+import { formatDecimal } from "../../common/number";
+import {
+  ErrorIcon,
+  HorizontalSpace,
+  SuccessIcon,
+  WarningIcon,
+} from "../common";
 
 type Props = {
   variantAnalysisStatus: VariantAnalysisStatus;
 
   totalRepositoryCount: number;
-  completedRepositoryCount?: number | undefined;
-
-  showWarning?: boolean;
+  completedRepositoryCount: number;
+  successfulRepositoryCount: number;
+  skippedRepositoryCount: number;
 };
+
+function getIcon(
+  variantAnalysisStatus: VariantAnalysisStatus,
+  completedRepositoryCount: number,
+  successfulRepositoryCount: number,
+  skippedRepositoryCount: number,
+) {
+  if (successfulRepositoryCount < completedRepositoryCount) {
+    if (variantAnalysisStatus === VariantAnalysisStatus.Canceled) {
+      return (
+        <>
+          <HorizontalSpace $size={2} />
+          <ErrorIcon label="Some analyses were stopped" />
+        </>
+      );
+    } else {
+      return (
+        <>
+          <HorizontalSpace $size={2} />
+          <ErrorIcon label="Some analyses failed" />
+        </>
+      );
+    }
+  } else if (skippedRepositoryCount > 0) {
+    return (
+      <>
+        <HorizontalSpace $size={2} />
+        <WarningIcon label="Some repositories were skipped" />
+      </>
+    );
+  } else if (variantAnalysisStatus === VariantAnalysisStatus.Succeeded) {
+    return (
+      <>
+        <HorizontalSpace $size={2} />
+        <SuccessIcon label="Completed" />
+      </>
+    );
+  } else {
+    return undefined;
+  }
+}
 
 export const VariantAnalysisRepositoriesStats = ({
   variantAnalysisStatus,
   totalRepositoryCount,
-  completedRepositoryCount = 0,
-  showWarning,
+  completedRepositoryCount,
+  successfulRepositoryCount,
+  skippedRepositoryCount,
 }: Props) => {
   if (variantAnalysisStatus === VariantAnalysisStatus.Failed) {
     return (
       <>
-        0<HorizontalSpace size={2} /><ErrorIcon />
+        0<HorizontalSpace $size={2} />
+        <ErrorIcon label="Variant analysis failed" />
       </>
     );
   }
 
   return (
     <>
-      {formatDecimal(completedRepositoryCount)}/{formatDecimal(totalRepositoryCount)}
-      {showWarning && <><HorizontalSpace size={2} /><WarningIcon /></>}
-      {!showWarning && variantAnalysisStatus === VariantAnalysisStatus.Succeeded &&
-        <><HorizontalSpace size={2} /><SuccessIcon label="Completed" /></>}
+      {formatDecimal(successfulRepositoryCount)}/
+      {formatDecimal(totalRepositoryCount)}
+      {getIcon(
+        variantAnalysisStatus,
+        completedRepositoryCount,
+        successfulRepositoryCount,
+        skippedRepositoryCount,
+      )}
     </>
   );
 };

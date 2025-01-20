@@ -1,6 +1,15 @@
-import * as I from 'immutable';
-import { EvaluationLogProblemReporter, EvaluationLogScanner, EvaluationLogScannerProvider } from './log-scanner';
-import { InLayer, ComputeRecursive, SummaryEvent, PipelineRun, ComputeSimple } from './log-summary';
+import type {
+  EvaluationLogProblemReporter,
+  EvaluationLogScanner,
+  EvaluationLogScannerProvider,
+} from "./log-scanner";
+import type {
+  InLayer,
+  ComputeRecursive,
+  SummaryEvent,
+  PipelineRun,
+  ComputeSimple,
+} from "./log-summary";
 
 /**
  * Like `max`, but returns 0 if no meaningful maximum can be computed.
@@ -17,56 +26,67 @@ function safeMax(it?: Iterable<number>) {
 function makeKey(
   queryCausingWork: string | undefined,
   predicate: string,
-  suffix = ''
+  suffix = "",
 ): string {
   if (queryCausingWork === undefined) {
     throw new Error(
-      'queryCausingWork was not defined on an event we expected it to be defined for!'
+      "queryCausingWork was not defined on an event we expected it to be defined for!",
     );
   }
-  return `${queryCausingWork}:${predicate}${suffix ? ' ' + suffix : ''}`;
+  return `${queryCausingWork}:${predicate}${suffix ? ` ${suffix}` : ""}`;
 }
 
-const DEPENDENT_PREDICATES_REGEXP = (() => {
+function getDependentPredicates(operations: string[]): string[] {
+  const id = String.raw`[0-9a-zA-Z:#_\./]+`;
+  const idWithAngleBrackets = String.raw`[0-9a-zA-Z:#_<>\./]+`;
+  const quotedId = String.raw`\`[^\`\r\n]*\``;
   const regexps = [
     // SCAN id
-    String.raw`SCAN\s+([0-9a-zA-Z:#_]+)\s`,
+    String.raw`SCAN\s+(${id}|${quotedId})\s`,
     // JOIN id WITH id
-    String.raw`JOIN\s+([0-9a-zA-Z:#_]+)\s+WITH\s+([0-9a-zA-Z:#_]+)\s`,
+    String.raw`JOIN\s+(${id}|${quotedId})\s+WITH\s+(${id}|${quotedId})\s`,
+    // JOIN WITH id
+    String.raw`JOIN\s+WITH\s+(${id}|${quotedId})\s`,
     // AGGREGATE id, id
-    String.raw`AGGREGATE\s+([0-9a-zA-Z:#_]+)\s*,\s+([0-9a-zA-Z:#_]+)`,
+    String.raw`AGGREGATE\s+(${id}|${quotedId})\s*,\s+(${id}|${quotedId})`,
     // id AND NOT id
-    String.raw`([0-9a-zA-Z:#_]+)\s+AND\s+NOT\s+([0-9a-zA-Z:#_]+)`,
+    String.raw`(${id}|${quotedId})\s+AND\s+NOT\s+(${id}|${quotedId})`,
+    // AND NOT id
+    String.raw`AND\s+NOT\s+(${id}|${quotedId})`,
     // INVOKE HIGHER-ORDER RELATION rel ON <id, ..., id>
-    String.raw`INVOKE\s+HIGHER-ORDER\s+RELATION\s[^\s]+\sON\s+<([0-9a-zA-Z:#_<>]+)((?:,[0-9a-zA-Z:#_<>]+)*)>`,
+    String.raw`INVOKE\s+HIGHER-ORDER\s+RELATION\s[^\s]+\sON\s+<(${idWithAngleBrackets}|${quotedId})((?:,${idWithAngleBrackets}|,${quotedId})*)>`,
     // SELECT id
-    String.raw`SELECT\s+([0-9a-zA-Z:#_]+)`
+    String.raw`SELECT\s+(${id}|${quotedId})`,
+    // REWRITE id WITH
+    String.raw`REWRITE\s+(${id}|${quotedId})\s+WITH\s`,
+    // id UNION id UNION ... UNION id
+    String.raw`(${id}|${quotedId})((?:\s+UNION\s+${id}|${quotedId})+)`,
   ];
-  return new RegExp(
-    `${String.raw`\{[0-9]+\}\s+[0-9a-zA-Z]+\s=\s(?:` + regexps.join('|')})`
+  const r = new RegExp(
+    `${
+      String.raw`\{[0-9]+\}\s+(?:[0-9a-zA-Z]+\s=|\|)\s(?:` + regexps.join("|")
+    })`,
   );
-})();
-
-function getDependentPredicates(operations: string[]): I.List<string> {
-  return I.List(operations).flatMap(operation => {
-    const matches = DEPENDENT_PREDICATES_REGEXP.exec(operation.trim());
-    if (matches !== null) {
-      return I.List(matches)
-        .rest() // Skip the first group as it's just the entire string
-        .filter(x => !!x && !x.match('r[0-9]+|PRIMITIVE')) // Only keep the references to predicates.
-        .flatMap(x => x.split(',')) // Group 2 in the INVOKE HIGHER_ORDER RELATION case is a comma-separated list of identifiers.
-        .filter(x => !!x); // Remove empty strings
-    } else {
-      return I.List();
-    }
+  return operations.flatMap((operation) => {
+    const matches = r.exec(operation.trim()) || [];
+    return matches
+      .slice(1) // Skip the first group as it's just the entire string
+      .filter((x) => !!x)
+      .flatMap((x) => x.split(",")) // Group 2 in the INVOKE HIGHER_ORDER RELATION case is a comma-separated list of identifiers.
+      .flatMap((x) => x.split(" UNION ")) // Split n-ary unions into individual arguments.
+      .filter((x) => !x.match("r[0-9]+|PRIMITIVE")) // Only keep the references to predicates.
+      .filter((x) => !!x) // Remove empty strings
+      .map((x) =>
+        x.startsWith("`") && x.endsWith("`") ? x.substring(1, x.length - 1) : x,
+      ); // Remove quotes from quoted identifiers
   });
 }
 
 function getMainHash(event: InLayer | ComputeRecursive): string {
   switch (event.evaluationStrategy) {
-    case 'IN_LAYER':
+    case "IN_LAYER":
       return event.mainHash;
-    case 'COMPUTE_RECURSIVE':
+    case "COMPUTE_RECURSIVE":
       return event.raHash;
   }
 }
@@ -74,16 +94,20 @@ function getMainHash(event: InLayer | ComputeRecursive): string {
 /**
  * Sum arrays a and b element-wise. The shorter array is padded with 0s if the arrays are not the same length.
  */
-function pointwiseSum(a: Int32Array, b: Int32Array, problemReporter: EvaluationLogProblemReporter): Int32Array {
+function pointwiseSum(
+  a: Int32Array,
+  b: Int32Array,
+  problemReporter: EvaluationLogProblemReporter,
+): Int32Array {
   function reportIfInconsistent(ai: number, bi: number) {
     if (ai === -1 && bi !== -1) {
       problemReporter.log(
-        `Operation was not evaluated in the first pipeline, but it was evaluated in the accumulated pipeline (with tuple count ${bi}).`
+        `Operation was not evaluated in the first pipeline, but it was evaluated in the accumulated pipeline (with tuple count ${bi}).`,
       );
     }
     if (ai !== -1 && bi === -1) {
       problemReporter.log(
-        `Operation was evaluated in the first pipeline (with tuple count ${ai}), but it was not evaluated in the accumulated pipeline.`
+        `Operation was evaluated in the first pipeline (with tuple count ${ai}), but it was not evaluated in the accumulated pipeline.`,
       );
     }
   }
@@ -115,7 +139,7 @@ function pushValue<K, V>(m: Map<K, V[]>, k: K, v: V) {
 function computeJoinOrderBadness(
   maxTupleCount: number,
   maxDependentPredicateSize: number,
-  resultSize: number
+  resultSize: number,
 ): number {
   return maxTupleCount / Math.max(maxDependentPredicateSize, resultSize);
 }
@@ -127,13 +151,16 @@ function computeJoinOrderBadness(
 interface Bucket {
   tupleCounts: Int32Array;
   resultSize: number;
-  dependentPredicateSizes: I.Map<string, number>;
+  dependentPredicateSizes: Map<string, number>;
 }
 
 class JoinOrderScanner implements EvaluationLogScanner {
   // Map a predicate hash to its result size
   private readonly predicateSizes = new Map<string, number>();
-  private readonly layerEvents = new Map<string, (ComputeRecursive | InLayer)[]>();
+  private readonly layerEvents = new Map<
+    string,
+    Array<ComputeRecursive | InLayer>
+  >();
   // Map a key of the form 'query-with-demand : predicate name' to its badness input.
   private readonly maxTupleCountMap = new Map<string, number[]>();
   private readonly resultSizeMap = new Map<string, number[]>();
@@ -142,13 +169,13 @@ class JoinOrderScanner implements EvaluationLogScanner {
 
   constructor(
     private readonly problemReporter: EvaluationLogProblemReporter,
-    private readonly warningThreshold: number) {
-  }
+    private readonly warningThreshold: number,
+  ) {}
 
   public onEvent(event: SummaryEvent): void {
     if (
       event.completionType !== undefined &&
-      event.completionType !== 'SUCCESS'
+      event.completionType !== "SUCCESS"
     ) {
       return; // Skip any evaluation that wasn't successful
     }
@@ -163,20 +190,20 @@ class JoinOrderScanner implements EvaluationLogScanner {
 
   private recordPredicateSizes(event: SummaryEvent): void {
     switch (event.evaluationStrategy) {
-      case 'EXTENSIONAL':
-      case 'COMPUTED_EXTENSIONAL':
-      case 'COMPUTE_SIMPLE':
-      case 'CACHACA':
-      case 'CACHE_HIT': {
+      case "EXTENSIONAL":
+      case "COMPUTED_EXTENSIONAL":
+      case "COMPUTE_SIMPLE":
+      case "CACHACA":
+      case "CACHE_HIT": {
         this.predicateSizes.set(event.raHash, event.resultSize);
         break;
       }
-      case 'SENTINEL_EMPTY': {
+      case "SENTINEL_EMPTY": {
         this.predicateSizes.set(event.raHash, 0);
         break;
       }
-      case 'COMPUTE_RECURSIVE':
-      case 'IN_LAYER': {
+      case "COMPUTE_RECURSIVE":
+      case "IN_LAYER": {
         this.predicateSizes.set(event.raHash, event.resultSize);
         // layerEvents are indexed by the mainHash.
         const hash = getMainHash(event);
@@ -189,22 +216,36 @@ class JoinOrderScanner implements EvaluationLogScanner {
     }
   }
 
-  private reportProblemIfNecessary(event: SummaryEvent, iteration: number, metric: number): void {
+  private reportProblemIfNecessary(
+    event: SummaryEvent,
+    iteration: number,
+    metric: number,
+  ): void {
     if (metric >= this.warningThreshold) {
-      this.problemReporter.reportProblem(event.predicateName, event.raHash, iteration,
-        `Relation '${event.predicateName}' has an inefficient join order. Its join order metric is ${metric.toFixed(2)}, which is larger than the threshold of ${this.warningThreshold.toFixed(2)}.`);
+      this.problemReporter.reportProblem(
+        event.predicateName,
+        event.raHash,
+        iteration,
+        `Relation '${
+          event.predicateName
+        }' has an inefficient join order. Its join order metric is ${metric.toFixed(
+          2,
+        )}, which is larger than the threshold of ${this.warningThreshold.toFixed(
+          2,
+        )}.`,
+      );
     }
   }
 
   private computeBadnessMetric(event: SummaryEvent): void {
     if (
       event.completionType !== undefined &&
-      event.completionType !== 'SUCCESS'
+      event.completionType !== "SUCCESS"
     ) {
       return; // Skip any evaluation that wasn't successful
     }
     switch (event.evaluationStrategy) {
-      case 'COMPUTE_SIMPLE': {
+      case "COMPUTE_SIMPLE": {
         if (!event.pipelineRuns) {
           // skip if the optional pipelineRuns field is not present.
           break;
@@ -224,16 +265,20 @@ class JoinOrderScanner implements EvaluationLogScanner {
           pushValue(
             this.maxDependentPredicateSizeMap,
             key,
-            maxDependentPredicateSize
+            maxDependentPredicateSize,
           );
-          const metric = computeJoinOrderBadness(maxTupleCount, maxDependentPredicateSize, resultSize!);
+          const metric = computeJoinOrderBadness(
+            maxTupleCount,
+            maxDependentPredicateSize,
+            resultSize!,
+          );
           this.joinOrderMetricMap.set(key, metric);
           this.reportProblemIfNecessary(event, 0, metric);
         }
         break;
       }
 
-      case 'COMPUTE_RECURSIVE': {
+      case "COMPUTE_RECURSIVE": {
         // Compute the badness metric for a recursive predicate for each ordering.
         const sccMetricInput = this.badnessInputsForRecursiveDelta(event);
         // Loop through each predicate in the SCC
@@ -244,12 +289,12 @@ class JoinOrderScanner implements EvaluationLogScanner {
             const key = makeKey(
               event.queryCausingWork,
               predicate,
-              `(${raReference})`
+              `(${raReference})`,
             );
             const maxTupleCount = Math.max(...bucket.tupleCounts);
             const resultSize = bucket.resultSize;
             const maxDependentPredicateSize = Math.max(
-              ...bucket.dependentPredicateSizes.values()
+              ...bucket.dependentPredicateSizes.values(),
             );
 
             if (maxDependentPredicateSize > 0) {
@@ -258,11 +303,15 @@ class JoinOrderScanner implements EvaluationLogScanner {
               pushValue(
                 this.maxDependentPredicateSizeMap,
                 key,
-                maxDependentPredicateSize
+                maxDependentPredicateSize,
               );
-              const metric = computeJoinOrderBadness(maxTupleCount, maxDependentPredicateSize, resultSize);
+              const metric = computeJoinOrderBadness(
+                maxTupleCount,
+                maxDependentPredicateSize,
+                resultSize,
+              );
               const oldMetric = this.joinOrderMetricMap.get(key);
-              if ((oldMetric === undefined) || (metric > oldMetric)) {
+              if (oldMetric === undefined || metric > oldMetric) {
                 this.joinOrderMetricMap.set(key, metric);
               }
             }
@@ -281,14 +330,14 @@ class JoinOrderScanner implements EvaluationLogScanner {
     func: (
       inLayerEvent: ComputeRecursive | InLayer,
       run: PipelineRun,
-      iteration: number
-    ) => void
+      iteration: number,
+    ) => void,
   ): void {
     const sccEvents = this.layerEvents.get(event.raHash)!;
     const nextPipeline: number[] = new Array(sccEvents.length).fill(0);
 
     const maxIteration = Math.max(
-      ...sccEvents.map(e => e.predicateIterationMillis.length)
+      ...sccEvents.map((e) => e.predicateIterationMillis.length),
     );
 
     for (let iteration = 0; iteration < maxIteration; ++iteration) {
@@ -299,7 +348,7 @@ class JoinOrderScanner implements EvaluationLogScanner {
           inLayerEvent.predicateIterationMillis.length <= iteration
             ? -1
             : inLayerEvent.predicateIterationMillis[iteration];
-        if (iterationTime != -1) {
+        if (iterationTime !== -1) {
           const run: PipelineRun =
             inLayerEvent.pipelineRuns[nextPipeline[predicate]++];
           func(inLayerEvent, run, iteration);
@@ -313,19 +362,23 @@ class JoinOrderScanner implements EvaluationLogScanner {
    */
   private badnessInputsForNonRecursiveDelta(
     pipelineRun: PipelineRun,
-    event: ComputeSimple
+    event: ComputeSimple,
   ): { maxTupleCount: number; maxDependentPredicateSize: number } {
-    const dependentPredicateSizes = Object.values(event.dependencies).map(hash =>
-      this.predicateSizes.get(hash) ?? 0  // Should always be present, but zero is a safe default.
+    const dependentPredicateSizes = Object.values(event.dependencies).map(
+      (hash) => this.predicateSizes.get(hash) ?? 0, // Should always be present, but zero is a safe default.
     );
     const maxDependentPredicateSize = safeMax(dependentPredicateSizes);
     return {
       maxTupleCount: safeMax(pipelineRun.counts),
-      maxDependentPredicateSize: maxDependentPredicateSize
+      maxDependentPredicateSize,
     };
   }
 
-  private prevDeltaSizes(event: ComputeRecursive, predicate: string, i: number) {
+  private prevDeltaSizes(
+    event: ComputeRecursive,
+    predicate: string,
+    i: number,
+  ) {
     // If an iteration isn't present in the map it means it was skipped because the optimizer
     // inferred that it was empty. So its size is 0.
     return this.curDeltaSizes(event, predicate, i - 1);
@@ -335,7 +388,9 @@ class JoinOrderScanner implements EvaluationLogScanner {
     // If an iteration isn't present in the map it means it was skipped because the optimizer
     // inferred that it was empty. So its size is 0.
     return (
-      this.layerEvents.get(event.raHash)?.find(x => x.predicateName === predicate)?.deltaSizes[i] ?? 0
+      this.layerEvents
+        .get(event.raHash)
+        ?.find((x) => x.predicateName === predicate)?.deltaSizes[i] ?? 0
     );
   }
 
@@ -346,24 +401,24 @@ class JoinOrderScanner implements EvaluationLogScanner {
     event: ComputeRecursive,
     inLayerEvent: InLayer | ComputeRecursive,
     raReference: string,
-    iteration: number
+    iteration: number,
   ) {
     const dependentPredicates = getDependentPredicates(
-      inLayerEvent.ra[raReference]
+      inLayerEvent.ra[raReference],
     );
-    let dependentPredicateSizes: I.Map<string, number>;
+    let dependentPredicateSizes: Map<string, number>;
     // We treat the base case as a non-recursive pipeline. In that case, the dependent predicates are
     // the dependencies of the base case and the cur_deltas.
-    if (raReference === 'base') {
-      dependentPredicateSizes = I.Map(
-        dependentPredicates.map((pred): [string, number] => {
+    if (raReference === "base") {
+      dependentPredicateSizes = dependentPredicates
+        .map((pred): [string, number] => {
           // A base case cannot contain a `prev_delta`, but it can contain a `cur_delta`.
           let size = 0;
-          if (pred.endsWith('#cur_delta')) {
+          if (pred.endsWith("#cur_delta")) {
             size = this.curDeltaSizes(
               event,
-              pred.slice(0, -'#cur_delta'.length),
-              iteration
+              pred.slice(0, -"#cur_delta".length),
+              iteration,
             );
           } else {
             const hash = event.dependencies[pred];
@@ -371,27 +426,26 @@ class JoinOrderScanner implements EvaluationLogScanner {
           }
           return [pred, size];
         })
-      );
+        .reduce((acc, [pred, size]) => acc.set(pred, size), new Map());
     } else {
       // It's a non-base case in a recursive pipeline. In that case, the dependent predicates are
       // only the prev_deltas.
-      dependentPredicateSizes = I.Map(
-        dependentPredicates
-          .flatMap(pred => {
-            // If it's actually a prev_delta
-            if (pred.endsWith('#prev_delta')) {
-              // Return the predicate without the #prev_delta suffix.
-              return [pred.slice(0, -'#prev_delta'.length)];
-            } else {
-              // Not a recursive delta. Skip it.
-              return [];
-            }
-          })
-          .map((prev): [string, number] => {
-            const size = this.prevDeltaSizes(event, prev, iteration);
-            return [prev, size];
-          })
-      );
+      dependentPredicateSizes = dependentPredicates
+        .flatMap((pred) => {
+          // If it's actually a prev_delta
+          if (pred.endsWith("#prev_delta")) {
+            // Return the predicate without the #prev_delta suffix.
+            return [pred.slice(0, -"#prev_delta".length)];
+          } else {
+            // Not a recursive delta. Skip it.
+            return [];
+          }
+        })
+        .map((prev): [string, number] => {
+          const size = this.prevDeltaSizes(event, prev, iteration);
+          return [prev, size];
+        })
+        .reduce((acc, [pred, size]) => acc.set(pred, size), new Map());
     }
 
     const deltaSize = inLayerEvent.deltaSizes[iteration];
@@ -401,7 +455,9 @@ class JoinOrderScanner implements EvaluationLogScanner {
   /**
    * Compute the metric input for all the events in a SCC that starts with main node `event`
    */
-  private badnessInputsForRecursiveDelta(event: ComputeRecursive): Map<string, Map<string, Bucket>> {
+  private badnessInputsForRecursiveDelta(
+    event: ComputeRecursive,
+  ): Map<string, Map<string, Bucket>> {
     // nameToOrderToBucket : predicate name -> ordering (i.e., standard, order_500000, etc.) -> bucket
     const nameToOrderToBucket = new Map<string, Map<string, Bucket>>();
 
@@ -417,7 +473,7 @@ class JoinOrderScanner implements EvaluationLogScanner {
         orderTobucket.set(raReference, {
           tupleCounts: new Int32Array(0),
           resultSize: 0,
-          dependentPredicateSizes: I.Map()
+          dependentPredicateSizes: new Map(),
         });
       }
 
@@ -425,7 +481,7 @@ class JoinOrderScanner implements EvaluationLogScanner {
         event,
         inLayerEvent,
         raReference,
-        iteration
+        iteration,
       );
 
       const bucket = orderTobucket.get(raReference)!;
@@ -433,18 +489,25 @@ class JoinOrderScanner implements EvaluationLogScanner {
       const newTupleCounts = pointwiseSum(
         bucket.tupleCounts,
         new Int32Array(run.counts),
-        this.problemReporter
+        this.problemReporter,
       );
       const resultSize = bucket.resultSize + deltaSize;
+
       // Pointwise sum the deltas.
-      const newDependentPredicateSizes = bucket.dependentPredicateSizes.mergeWith(
-        (oldSize, newSize) => oldSize + newSize,
-        dependentPredicateSizes
+      const newDependentPredicateSizes = new Map<string, number>(
+        bucket.dependentPredicateSizes,
       );
+      for (const [pred, size] of dependentPredicateSizes) {
+        newDependentPredicateSizes.set(
+          pred,
+          (newDependentPredicateSizes.get(pred) ?? 0) + size,
+        );
+      }
+
       orderTobucket.set(raReference, {
         tupleCounts: newTupleCounts,
-        resultSize: resultSize,
-        dependentPredicateSizes: newDependentPredicateSizes
+        resultSize,
+        dependentPredicateSizes: newDependentPredicateSizes,
       });
     });
     return nameToOrderToBucket;
@@ -452,10 +515,11 @@ class JoinOrderScanner implements EvaluationLogScanner {
 }
 
 export class JoinOrderScannerProvider implements EvaluationLogScannerProvider {
-  constructor(private readonly getThreshdold: () => number) {
-  }
+  constructor(private readonly getThreshdold: () => number) {}
 
-  public createScanner(problemReporter: EvaluationLogProblemReporter): EvaluationLogScanner {
+  public createScanner(
+    problemReporter: EvaluationLogProblemReporter,
+  ): EvaluationLogScanner {
     const threshold = this.getThreshdold();
     return new JoinOrderScanner(problemReporter, threshold);
   }

@@ -1,5 +1,6 @@
-import { SummaryEvent } from './log-summary';
-import { readJsonlFile } from './jsonl-reader';
+import type { SummaryEvent } from "./log-summary";
+import { readJsonlFile } from "../common/jsonl-reader";
+import type { Disposable } from "../common/disposable-object";
 
 /**
  * Callback interface used to report diagnostics from a log scanner.
@@ -14,7 +15,12 @@ export interface EvaluationLogProblemReporter {
    * must be zero.
    * @param message The problem message.
    */
-  reportProblem(predicateName: string, raHash: string, iteration: number, message: string): void;
+  reportProblem(
+    predicateName: string,
+    raHash: string,
+    iteration: number,
+    message: string,
+  ): void;
 
   /**
    * Log a message about a problem in the implementation of the scanner. These will typically be
@@ -52,18 +58,16 @@ export interface EvaluationLogScannerProvider {
    * Create a new instance of `EvaluationLogScanner` to scan a single summary log.
    * @param problemReporter Callback interface for reporting any problems discovered.
    */
-  createScanner(problemReporter: EvaluationLogProblemReporter): EvaluationLogScanner;
-}
-
-/**
- * Same as VSCode's `Disposable`, but avoids a dependency on VS Code.
- */
-export interface Disposable {
-  dispose(): void;
+  createScanner(
+    problemReporter: EvaluationLogProblemReporter,
+  ): EvaluationLogScanner;
 }
 
 export class EvaluationLogScannerSet {
-  private readonly scannerProviders = new Map<number, EvaluationLogScannerProvider>();
+  private readonly scannerProviders = new Map<
+    number,
+    EvaluationLogScannerProvider
+  >();
   private nextScannerProviderId = 0;
 
   /**
@@ -72,7 +76,9 @@ export class EvaluationLogScannerSet {
    * @param provider The provider.
    * @returns A `Disposable` that, when disposed, will unregister the provider.
    */
-  public registerLogScannerProvider(provider: EvaluationLogScannerProvider): Disposable {
+  public registerLogScannerProvider(
+    provider: EvaluationLogScannerProvider,
+  ): Disposable {
     const id = this.nextScannerProviderId;
     this.nextScannerProviderId++;
 
@@ -80,7 +86,7 @@ export class EvaluationLogScannerSet {
     return {
       dispose: () => {
         this.scannerProviders.delete(id);
-      }
+      },
     };
   }
 
@@ -89,15 +95,20 @@ export class EvaluationLogScannerSet {
    * @param jsonSummaryLocation The file path of the JSON summary log.
    * @param problemReporter Callback interface for reporting any problems discovered.
    */
-  public async scanLog(jsonSummaryLocation: string, problemReporter: EvaluationLogProblemReporter): Promise<void> {
-    const scanners = [...this.scannerProviders.values()].map(p => p.createScanner(problemReporter));
+  public async scanLog(
+    jsonSummaryLocation: string,
+    problemReporter: EvaluationLogProblemReporter,
+  ): Promise<void> {
+    const scanners = [...this.scannerProviders.values()].map((p) =>
+      p.createScanner(problemReporter),
+    );
 
-    await readJsonlFile(jsonSummaryLocation, async obj => {
-      scanners.forEach(scanner => {
+    await readJsonlFile<SummaryEvent>(jsonSummaryLocation, async (obj) => {
+      scanners.forEach((scanner) => {
         scanner.onEvent(obj);
       });
     });
 
-    scanners.forEach(scanner => scanner.onDone());
+    scanners.forEach((scanner) => scanner.onDone());
   }
 }

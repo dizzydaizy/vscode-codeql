@@ -1,6 +1,5 @@
-import * as React from 'react';
-import type { ReactNode } from 'react';
-import styled from 'styled-components';
+import type { ReactNode } from "react";
+import { styled } from "styled-components";
 
 type Props = {
   title: ReactNode;
@@ -12,7 +11,7 @@ const Container = styled.div`
 `;
 
 const Header = styled.div`
-  color: var(--vscode-badge-foreground);
+  color: var(--vscode-editor-foreground);
   font-size: 0.85em;
   font-weight: 800;
   text-transform: uppercase;
